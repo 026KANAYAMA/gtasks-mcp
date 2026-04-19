@@ -213,50 +213,73 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+function isAuthError(err: any): boolean {
+  const msg = err?.message ?? "";
+  const code = err?.code ?? err?.status ?? err?.response?.status;
+  return (
+    msg.includes("invalid_grant") ||
+    msg.includes("invalid_request") ||
+    msg.includes("Token has been expired") ||
+    code === 401
+  );
+}
+
+function authErrorMessage(): string {
+  return (
+    "Google Tasks 認証エラー: リフレッシュトークンが失効しています。\n" +
+    "再認証が必要です。MEMO.md を参照して auth コマンドを実行してください。\n" +
+    "その後 Claude Code を再起動してください。"
+  );
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name === "search") {
-    const taskResult = await TaskActions.search(request, tasks);
-    return taskResult;
+  try {
+    if (request.params.name === "search") {
+      return await TaskActions.search(request, tasks);
+    }
+    if (request.params.name === "list") {
+      return await TaskActions.list(request, tasks);
+    }
+    if (request.params.name === "list-tasklists") {
+      const response = await tasks.tasklists.list();
+      const taskLists = response.data.items || [];
+      const formatted = taskLists
+        .map((list) => `${list.title} (ID: ${list.id})`)
+        .join("\n");
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              taskLists.length > 0
+                ? `Found ${taskLists.length} task lists:\n${formatted}`
+                : "No task lists found",
+          },
+        ],
+      };
+    }
+    if (request.params.name === "create") {
+      return await TaskActions.create(request, tasks);
+    }
+    if (request.params.name === "update") {
+      return await TaskActions.update(request, tasks);
+    }
+    if (request.params.name === "delete") {
+      return await TaskActions.delete(request, tasks);
+    }
+    if (request.params.name === "clear") {
+      return await TaskActions.clear(request, tasks);
+    }
+    throw new Error("Tool not found");
+  } catch (err: any) {
+    if (isAuthError(err)) {
+      return {
+        content: [{ type: "text", text: authErrorMessage() }],
+        isError: true,
+      };
+    }
+    throw err;
   }
-  if (request.params.name === "list") {
-    const taskResult = await TaskActions.list(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "list-tasklists") {
-    const response = await tasks.tasklists.list();
-    const taskLists = response.data.items || [];
-    const formatted = taskLists
-      .map((list) => `${list.title} (ID: ${list.id})`)
-      .join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            taskLists.length > 0
-              ? `Found ${taskLists.length} task lists:\n${formatted}`
-              : "No task lists found",
-        },
-      ],
-    };
-  }
-  if (request.params.name === "create") {
-    const taskResult = await TaskActions.create(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "update") {
-    const taskResult = await TaskActions.update(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "delete") {
-    const taskResult = await TaskActions.delete(request, tasks);
-    return taskResult;
-  }
-  if (request.params.name === "clear") {
-    const taskResult = await TaskActions.clear(request, tasks);
-    return taskResult;
-  }
-  throw new Error("Tool not found");
 });
 
 const credentialsPath =
@@ -304,10 +327,33 @@ async function loadCredentialsAndRunServer() {
   const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
   const auth = new google.auth.OAuth2(client_id, client_secret);
   auth.setCredentials(credentials);
+
+  // トークンが更新されたら自動的にファイルへ保存する
+  auth.on("tokens", (tokens) => {
+    const current = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
+    const updated = { ...current, ...tokens };
+    fs.writeFileSync(credentialsPath, JSON.stringify(updated));
+  });
+
   google.options({ auth });
 
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  try {
+    await server.connect(transport);
+  } catch (err: any) {
+    const isAuthError =
+      err?.message?.includes("invalid_grant") ||
+      err?.message?.includes("invalid_request") ||
+      err?.code === 401;
+    if (isAuthError) {
+      console.error(
+        "[gtasks-mcp] 認証エラー: リフレッシュトークンが失効しています。\n" +
+        "MEMO.md を参照して auth コマンドを実行し、Claude Code を再起動してください。"
+      );
+      process.exit(1);
+    }
+    throw err;
+  }
 }
 
 if (process.argv[2] === "auth") {
