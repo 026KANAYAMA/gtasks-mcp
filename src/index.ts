@@ -292,8 +292,17 @@ async function loadCredentialsAndRunServer() {
     process.exit(1);
   }
 
+  const keysPath =
+    process.env.GTASKS_KEYS_PATH ??
+    path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../gcp-oauth.keys.json",
+    );
+  const keys = JSON.parse(fs.readFileSync(keysPath, "utf-8"));
+  const { client_id, client_secret } = keys.installed ?? keys.web;
+
   const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
-  const auth = new google.auth.OAuth2();
+  const auth = new google.auth.OAuth2(client_id, client_secret);
   auth.setCredentials(credentials);
   google.options({ auth });
 
