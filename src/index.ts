@@ -259,17 +259,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   throw new Error("Tool not found");
 });
 
-const credentialsPath = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  "../.gtasks-server-credentials.json",
-);
+const credentialsPath =
+  process.env.GTASKS_CREDENTIALS_PATH ??
+  path.join(
+    path.dirname(new URL(import.meta.url).pathname),
+    "../.gtasks-server-credentials.json",
+  );
 
 async function authenticateAndSaveCredentials() {
   console.log("Launching auth flow…");
-  const p = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    "../gcp-oauth.keys.json",
-  );
+  const p =
+    process.env.GTASKS_KEYS_PATH ??
+    path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../gcp-oauth.keys.json",
+    );
 
   console.log(p);
   const auth = await authenticate({
